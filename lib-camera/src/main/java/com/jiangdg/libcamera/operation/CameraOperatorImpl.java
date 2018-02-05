@@ -6,9 +6,11 @@ import android.graphics.ImageFormat;
 import android.hardware.Camera;
 import android.util.Log;
 import android.view.OrientationEventListener;
+import android.view.SurfaceHolder;
 
 import com.jiangdg.libcamera.utils.SensorOrientation;
 
+import java.io.IOException;
 import java.lang.ref.WeakReference;
 import java.util.List;
 
@@ -17,16 +19,20 @@ import java.util.List;
  * Created by jiangdongguo on 2018/2/5.
  */
 
-public class CameraOperatorImpl implements ICameraOperator {
+public class CameraOperatorImpl implements ICameraOperator, Camera.OnZoomChangeListener, Camera.PreviewCallback {
     private static final String TAG = "CameraSurfaceView";
     private int width = 640;
     private int height = 480;
     private Camera mCamera;
-    private boolean isFrontCamera;
     private static  CameraOperatorImpl mCamOperatorImpl;
     private WeakReference<Context> mContextWrf;
+    private WeakReference<SurfaceHolder> mSurfaceHolderWrf;
+
     private SensorOrientation mOriSensor;
+    private OnCameraListener mCamListener;
+
     private int mPhoneDegree;
+    private boolean isFrontCamera = true;
 
     private CameraOperatorImpl(Context context) {
         mContextWrf = new WeakReference<Context>(context);
@@ -43,7 +49,15 @@ public class CameraOperatorImpl implements ICameraOperator {
 
     // Camera对外回调接口
     public interface OnCameraListener {
+        // 变焦
+        void onZoomChanged(int value,boolean state,Camera camera);
+        // 预览
+        void onPreviewFrame(byte[] data,Camera camera);
+    }
 
+    @Override
+    public void setOnCameraListener(OnCameraListener listener) {
+        this.mCamListener = listener;
     }
 
     @Override
@@ -96,25 +110,51 @@ public class CameraOperatorImpl implements ICameraOperator {
         // 图片缩略图质量
         parameters.setJpegThumbnailQuality(100);
         mCamera.setParameters(parameters);
-        // 预览方向
         mCamera.setDisplayOrientation(90);
+        mCamera.setZoomChangeListener(this);
     }
 
     @Override
     public void destoryCamera() {
         if(mCamera == null)
             return;
-        mCamera.setPreviewCallbackWithBuffer(null);
+        mCamera.release();
+        mCamera = null;
     }
 
     @Override
     public void startPreview() {
-
+        if(mSurfaceHolderWrf != null) {
+            try {
+                mCamera.setPreviewDisplay(mSurfaceHolderWrf.get());
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        }
+        mCamera.startPreview();
+        // 开启预览，自动对焦一次
+        mCamera.autoFocus(null);
+        // 注册预览回调接口,缓存大小为一帧图像所占字节数
+        // 即，(width * height * 每个像素所占bit数)/8
+        int previewFormat = mCamera.getParameters().getPreviewFormat();
+        Camera.Size previewSize = mCamera.getParameters().getPreviewSize();
+        int bufferSize = previewSize.width * previewSize.height *
+                ImageFormat.getBitsPerPixel(previewFormat) / 8;
+        mCamera.addCallbackBuffer(new byte[bufferSize]);
+        mCamera.setPreviewCallbackWithBuffer(this);
     }
 
     @Override
     public void stopPreview() {
-
+        if(mCamera == null)
+            return;
+        try {
+            mCamera.setPreviewDisplay(null);
+            mCamera.setPreviewCallbackWithBuffer(null);
+            mCamera.stopPreview();
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
     }
 
     @Override
@@ -139,7 +179,9 @@ public class CameraOperatorImpl implements ICameraOperator {
     }
 
     @Override
-    public void startOrientationSenor() {
+    public void startOrientationSensor() {
+        if(mOriSensor == null)
+            return;
         mOriSensor.startSensorOrientation(new SensorOrientation.OnChangedListener() {
             @Override
             public void onOrientatonChanged(int orientation) {
@@ -165,6 +207,32 @@ public class CameraOperatorImpl implements ICameraOperator {
                 updateCameraOrientation();
             }
         });
+    }
+
+    @Override
+    public void stopOrientationSensor() {
+        if(mOriSensor == null)
+            return;
+        mOriSensor.disable();
+    }
+
+    @Override
+    public void setSurfaceHolder(SurfaceHolder holder) {
+        mSurfaceHolderWrf = new WeakReference<>(holder);
+    }
+
+    @Override
+    public void onZoomChange(int i, boolean b, Camera camera) {
+        if(mCamListener != null) {
+            mCamListener.onZoomChanged(i,b,camera);
+        }
+    }
+
+    @Override
+    public void onPreviewFrame(byte[] data, Camera camera) {
+        if(mCamListener != null) {
+            mCamListener.onPreviewFrame(data,camera);
+        }
     }
 
     private void updateCameraOrientation() {
