@@ -12,7 +12,7 @@ import java.util.Calendar;
 
 /**加速器传感器，监听手机运动状态，比如静止、移动，用于自动对焦
  *
- * @author Created by jiangdongguo on 2017-3-1下午2:17:40
+ * Created by jiangdongguo on 2018-2-1
  */
 public class SensorAccelerator implements SensorEventListener {
 	private int status = -1; 

@@ -1,6 +1,5 @@
 package com.jiangdg.libcamera;
 
-import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.ImageFormat;
@@ -11,6 +10,8 @@ import android.view.SurfaceHolder;
 import android.view.SurfaceView;
 
 import com.jiangdg.libcamera.utils.CameraUtil;
+import com.jiangdg.libcamera.utils.MediaRecordUtil;
+import com.jiangdg.libcamera.utils.SensorAccelerator;
 import com.jiangdg.libcamera.utils.SensorOrientation;
 
 import java.io.File;
@@ -18,14 +19,13 @@ import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.lang.ref.WeakReference;
-import java.util.List;
 
 /**
  * 相机操作实现类
  * Created by jiangdongguo on 2018/2/5.
  */
 
-public class CameraHelper implements SurfaceHolder.Callback{
+public class CameraHelper implements SurfaceHolder.Callback, Camera.PreviewCallback{
     private static final String TAG = "CameraHelper";
     private int width = 640;
     private int height = 480;
@@ -35,10 +35,12 @@ public class CameraHelper implements SurfaceHolder.Callback{
     private SurfaceHolder mHolder;
     private OnCameraHelperListener mHelperListener;
     private SensorOrientation mOriSensor;
+    private SensorAccelerator mAccelerSensor;
     private int mPhoneDegree;
     private boolean isFrontCamera = false;
 
-    private CameraHelper() {}
+    private CameraHelper() {
+    }
 
     public static CameraHelper createCameraHelper() {
         if (mCameraHelper == null) {
@@ -48,7 +50,17 @@ public class CameraHelper implements SurfaceHolder.Callback{
     }
 
     public interface OnCameraHelperListener {
-        void OnTakePicture(String path,Bitmap bm);
+        // 拍照
+        void OnTakePicture(String path, Bitmap bm);
+
+        // 对焦
+        void onCameraFocus(boolean success, Camera camera);
+
+        // 预览
+        void onCameraPreview(byte[] data, Camera camera);
+
+        // 变焦
+        void onZoomChanged(int maxZoomVaule, int zoomValue);
     }
 
     public void setOnCameraHelperListener(OnCameraHelperListener listener) {
@@ -56,20 +68,36 @@ public class CameraHelper implements SurfaceHolder.Callback{
     }
 
     @Override
+    public void onPreviewFrame(byte[] data, Camera camera) {
+        if (data == null)
+            return;
+        if (mHelperListener != null) {
+            mHelperListener.onCameraPreview(data, camera);
+        }
+        // 调用 setPreviewCallbackWithBuffer方法获取预览图像流
+        // 需要使用addCallbackBuffer进行数据回调，否则，不会有数据
+        if (mCamera != null) {
+            mCamera.addCallbackBuffer(data);
+        }
+    }
+
+    @Override
     public void surfaceCreated(SurfaceHolder holder) {
         createCamera();
         startPreview();
         startOrientationSensor();
+        startAcceleratorSensor();
     }
 
     @Override
     public void surfaceChanged(SurfaceHolder holder, int format, int width, int height) {
-        updateCameraOrientation();
+
     }
 
     @Override
     public void surfaceDestroyed(SurfaceHolder holder) {
         stopOrientationSensor();
+        stopAcceleratorSensor();
         stopPreview();
         destoryCamera();
     }
@@ -84,39 +112,39 @@ public class CameraHelper implements SurfaceHolder.Callback{
         mCamera.takePicture(null, null, new Camera.PictureCallback() {
             @Override
             public void onPictureTaken(byte[] data, Camera camera) {
-                if(mHelperListener != null) {
+                if (mHelperListener != null) {
                     // 如果data=null,说明拍照失败
-                    if(data != null) {
+                    if (data != null) {
                         File file = new File(path);
-                        Bitmap bitmap = BitmapFactory.decodeByteArray(data,0,data.length);
+                        Bitmap bitmap = BitmapFactory.decodeByteArray(data, 0, data.length);
                         FileOutputStream fos = null;
                         try {
                             fos = new FileOutputStream(file);
                             // 对图片进行旋转
                             // 前置摄像头需要对垂直方向做变换，否则照片是颠倒的
-                            int rotation = (mPhoneDegree==270 ? 0 : mPhoneDegree+90);
-                            if(isFrontCamera) {
-                                if(rotation == 90) {
-                                    rotation =270;
-                                } else if(rotation == 270) {
+                            int rotation = (mPhoneDegree == 270 ? 0 : mPhoneDegree + 90);
+                            if (isFrontCamera) {
+                                if (rotation == 90) {
+                                    rotation = 270;
+                                } else if (rotation == 270) {
                                     rotation = 90;
                                 }
                             }
                             Matrix matrix = new Matrix();
                             matrix.setRotate(rotation);
-                            Bitmap rotateBmp = Bitmap.createBitmap(bitmap,0,0,bitmap.getWidth(),bitmap.getHeight(),matrix,false);
-                            rotateBmp.compress(Bitmap.CompressFormat.JPEG,100,fos);
+                            Bitmap rotateBmp = Bitmap.createBitmap(bitmap, 0, 0, bitmap.getWidth(), bitmap.getHeight(), matrix, false);
+                            rotateBmp.compress(Bitmap.CompressFormat.JPEG, 100, fos);
                             // 回传结果
-                            mHelperListener.OnTakePicture(path,rotateBmp);
+                            mHelperListener.OnTakePicture(path, rotateBmp);
                             // 重新预览
                             stopPreview();
                             startPreview();
                         } catch (FileNotFoundException e) {
-                            Log.e(TAG,"拍照失败：请确保路径是否正确，或者存储权限");
+                            Log.e(TAG, "拍照失败：请确保路径是否正确，或者存储权限");
                             e.printStackTrace();
-                        }finally {
+                        } finally {
                             try {
-                                if(fos != null) {
+                                if (fos != null) {
                                     fos.close();
                                 }
                                 bitmap.recycle();
@@ -163,17 +191,17 @@ public class CameraHelper implements SurfaceHolder.Callback{
         }
         Camera.Parameters parameters = mCamera.getParameters();
         // 预览分辨率，默认640x480
-        parameters.setPreviewSize(width,height);
+        parameters.setPreviewSize(width, height);
         // 预览颜色格式，默认NV21
         parameters.setPreviewFormat(ImageFormat.NV21);
         // 自动对焦
-        if(CameraUtil.isSupportFocusAuto(parameters)) {
+        if (CameraUtil.isSupportFocusAuto(parameters)) {
             parameters.setFocusMode(Camera.Parameters.FLASH_MODE_AUTO);
         }
         // 图片格式，默认JPEG
         parameters.setPictureFormat(ImageFormat.JPEG);
         // 图片尺寸，与预览尺寸一致
-        parameters.setPictureSize(width,height);
+        parameters.setPictureSize(width, height);
         // 图片质量，默认最好
         parameters.setJpegQuality(100);
         // 图片缩略图质量
@@ -183,14 +211,14 @@ public class CameraHelper implements SurfaceHolder.Callback{
     }
 
     private void destoryCamera() {
-        if(mCamera == null)
+        if (mCamera == null)
             return;
         mCamera.release();
         mCamera = null;
     }
 
     private void startPreview() {
-        if(mHolder != null) {
+        if (mHolder != null) {
             try {
                 mCamera.setPreviewDisplay(mHolder);
             } catch (IOException e) {
@@ -207,10 +235,11 @@ public class CameraHelper implements SurfaceHolder.Callback{
         int bufferSize = previewSize.width * previewSize.height *
                 ImageFormat.getBitsPerPixel(previewFormat) / 8;
         mCamera.addCallbackBuffer(new byte[bufferSize]);
+        mCamera.setPreviewCallbackWithBuffer(this);
     }
 
     private void stopPreview() {
-        if(mCamera == null)
+        if (mCamera == null)
             return;
         try {
             mCamera.stopPreview();
@@ -221,6 +250,24 @@ public class CameraHelper implements SurfaceHolder.Callback{
         }
     }
 
+    // Camera对焦
+    public void cameraFocus() {
+        if (mCamera != null) {
+            Camera.Parameters parameter = mCamera.getParameters();
+            if (CameraUtil.isSupportFocusAuto(parameter)) {
+                mCamera.autoFocus(new Camera.AutoFocusCallback() {
+                    @Override
+                    public void onAutoFocus(boolean success, Camera camera) {
+                        if (mHelperListener != null) {
+                            mHelperListener.onCameraFocus(success, camera);
+                        }
+                    }
+                });
+            }
+        }
+    }
+
+    // Camera前后置切换
     public void switchCamera() {
         stopPreview();
         destoryCamera();
@@ -231,6 +278,7 @@ public class CameraHelper implements SurfaceHolder.Callback{
 
     }
 
+    // Camera分辨率切换
     public void updateResolution(int width, int height) {
         this.width = width;
         this.height = height;
@@ -238,6 +286,46 @@ public class CameraHelper implements SurfaceHolder.Callback{
         destoryCamera();
         createCamera();
         startPreview();
+    }
+
+    public void startRecordMp4(String videoPath) {
+        MediaRecordUtil.startMediaRecorder(mCamera,mSurfaceViewRf.get().getHolder().getSurface(),videoPath);
+    }
+
+    public void stopRecordMp4() {
+        MediaRecordUtil.stopMediaRecorder();
+    }
+
+    // 变焦增大，inZoomIn = true
+    // 变焦缩小，inZoomIn = false
+    public void setZoom(boolean isZoomIn) {
+        if (!isSupportZoom() || isFrontCamera) {
+            Log.w("dddd", "(前)摄像头不支持变焦");
+            return;
+        }
+        Camera.Parameters parameters = mCamera.getParameters();
+        parameters.setFocusMode(Camera.Parameters.FOCUS_MODE_MACRO);
+        int maxZoom = parameters.getMaxZoom();
+        int curZoom = parameters.getZoom();
+
+        if (isZoomIn && curZoom < maxZoom) {
+            curZoom++;
+        } else if (curZoom > 0) {
+            curZoom--;
+        }
+        parameters.setZoom(curZoom);
+        mCamera.setParameters(parameters);
+        if (mHelperListener != null) {
+            mHelperListener.onZoomChanged(maxZoom, curZoom);
+        }
+    }
+
+    private boolean isSupportZoom() {
+        boolean isSupport = false;
+        if (mCamera.getParameters().isZoomSupported()) {
+            isSupport = true;
+        }
+        return isSupport;
     }
 
     private void startOrientationSensor() {
@@ -249,49 +337,51 @@ public class CameraHelper implements SurfaceHolder.Callback{
                 // mPhoneDegree = 0,正常垂直方向
                 // mPhoneDegree = 90,向右水平方向 ...
                 int rotate = 0;
-                if((orientation>=0 && orientation<=45) || (orientation>315)) {
+                if ((orientation >= 0 && orientation <= 45) || (orientation > 315)) {
                     rotate = 0;
-                } else if(orientation>45 && orientation<=135) {
+                } else if (orientation > 45 && orientation <= 135) {
                     rotate = 90;
-                } else if(orientation>135 && orientation<=225) {
+                } else if (orientation > 135 && orientation <= 225) {
                     rotate = 180;
-                } else if (orientation>225 && orientation<=315){
+                } else if (orientation > 225 && orientation <= 315) {
                     rotate = 270;
                 } else {
                     rotate = 0;
                 }
-                if(rotate == orientation)
+                if (rotate == orientation)
                     return;
                 mPhoneDegree = rotate;
-                Log.i(TAG,"手机方向角度："+mPhoneDegree);
-                // 根据手机方向，修改保存图片的旋转角度
-//                updateCameraOrientation();
+                Log.i(TAG, "手机方向角度：" + mPhoneDegree);
             }
         });
         mOriSensor.enable();
     }
 
     private void stopOrientationSensor() {
-        if(mOriSensor != null) {
+        if (mOriSensor != null) {
             mOriSensor.disable();
         }
     }
 
-    private void updateCameraOrientation() {
-        if(mCamera == null)
-            return;
-        Camera.Parameters parameters = mCamera.getParameters();
-        int rotation = (mPhoneDegree==270 ? 0 : mPhoneDegree+90);
-        if(isFrontCamera) {
-            if(rotation == 90) {
-                rotation =270;
-            } else if(rotation == 270) {
-                rotation = 90;
+    private void startAcceleratorSensor() {
+        mAccelerSensor = SensorAccelerator.getSensorInstance();
+        mAccelerSensor.startSensorAccelerometer(mSurfaceViewRf.get().getContext(), new SensorAccelerator.OnSensorChangedResult() {
+            @Override
+            public void onMoving(int x, int y, int z) {
+
             }
+
+            @Override
+            public void onStopped() {
+                // 开始对焦
+                cameraFocus();
+            }
+        });
+    }
+
+    private void stopAcceleratorSensor() {
+        if (mAccelerSensor != null) {
+            mAccelerSensor.stopSensorAccelerometer();
         }
-        // setRotation方法不会修正拍摄照片的方向
-        // 只是将照片的方向存储到exf信息头中
-        parameters.setRotation(rotation);
-        mCamera.setParameters(parameters);
     }
 }
