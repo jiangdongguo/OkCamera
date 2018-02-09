@@ -25,8 +25,9 @@ import java.lang.ref.WeakReference;
  * Created by jiangdongguo on 2018/2/5.
  */
 
-public class CameraHelper implements SurfaceHolder.Callback, Camera.PreviewCallback{
+public class CameraHelper implements SurfaceHolder.Callback, Camera.PreviewCallback {
     private static final String TAG = "CameraHelper";
+    private final MediaRecordUtil mRecordUtil;
     private int width = 640;
     private int height = 480;
     private Camera mCamera;
@@ -40,6 +41,7 @@ public class CameraHelper implements SurfaceHolder.Callback, Camera.PreviewCallb
     private boolean isFrontCamera = false;
 
     private CameraHelper() {
+        mRecordUtil = MediaRecordUtil.getInstance();
     }
 
     public static CameraHelper createCameraHelper() {
@@ -252,18 +254,18 @@ public class CameraHelper implements SurfaceHolder.Callback, Camera.PreviewCallb
 
     // Camera对焦
     public void cameraFocus() {
-        if (mCamera != null) {
-            Camera.Parameters parameter = mCamera.getParameters();
-            if (CameraUtil.isSupportFocusAuto(parameter)) {
-                mCamera.autoFocus(new Camera.AutoFocusCallback() {
-                    @Override
-                    public void onAutoFocus(boolean success, Camera camera) {
-                        if (mHelperListener != null) {
-                            mHelperListener.onCameraFocus(success, camera);
-                        }
+        if (mCamera == null || mRecordUtil.isRecording())
+            return;
+        Camera.Parameters parameter = mCamera.getParameters();
+        if (CameraUtil.isSupportFocusAuto(parameter)) {
+            mCamera.autoFocus(new Camera.AutoFocusCallback() {
+                @Override
+                public void onAutoFocus(boolean success, Camera camera) {
+                    if (mHelperListener != null) {
+                        mHelperListener.onCameraFocus(success, camera);
                     }
-                });
-            }
+                }
+            });
         }
     }
 
@@ -289,11 +291,15 @@ public class CameraHelper implements SurfaceHolder.Callback, Camera.PreviewCallb
     }
 
     public void startRecordMp4(String videoPath) {
-        MediaRecordUtil.startMediaRecorder(mCamera,mSurfaceViewRf.get().getHolder().getSurface(),videoPath);
+        MediaRecordUtil.RecordParams params = new MediaRecordUtil.RecordParams();
+        params.setFrontCamera(isFrontCamera);
+        params.setPhoneDegree(mPhoneDegree);
+        params.setVideoPath(videoPath);
+        mRecordUtil.startMediaRecorder(mCamera, mSurfaceViewRf.get().getHolder().getSurface(), params);
     }
 
     public void stopRecordMp4() {
-        MediaRecordUtil.stopMediaRecorder();
+        mRecordUtil.stopMediaRecorder();
     }
 
     // 变焦增大，inZoomIn = true
