@@ -6,6 +6,7 @@ import android.graphics.ImageFormat;
 import android.graphics.Matrix;
 import android.hardware.Camera;
 import android.util.Log;
+import android.util.Size;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
 
@@ -19,6 +20,7 @@ import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.lang.ref.WeakReference;
+import java.util.List;
 
 /**
  * 相机操作实现类
@@ -28,8 +30,8 @@ import java.lang.ref.WeakReference;
 public class CameraHelper implements SurfaceHolder.Callback, Camera.PreviewCallback {
     private static final String TAG = "CameraHelper";
     private final MediaRecordUtil mRecordUtil;
-    private int width = 640;
-    private int height = 480;
+    private int width = 1280;
+    private int height = 720;
     private Camera mCamera;
     private static CameraHelper mCameraHelper;
     private WeakReference<SurfaceView> mSurfaceViewRf;
@@ -288,6 +290,16 @@ public class CameraHelper implements SurfaceHolder.Callback, Camera.PreviewCallb
         destoryCamera();
         createCamera();
         startPreview();
+    }
+
+    public List<Camera.Size> getPreviewSizes() {
+        if(mCamera == null)
+            return null;
+        Camera.Parameters param = mCamera.getParameters();
+        if(param != null) {
+            return param.getSupportedPreviewSizes();
+        }
+        return  null;
     }
 
     public void startRecordMp4(String videoPath) {
