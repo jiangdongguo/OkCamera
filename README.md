@@ -72,7 +72,7 @@ mCamHelper.switchCamera();
 mCamHelper.updateResolution(int width, int height);
 ```
 
-    
+
 License
 -------
 
